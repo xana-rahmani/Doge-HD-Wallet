@@ -1,21 +1,16 @@
 #!/usr/bin/env python3
 
-import hashlib
-import hmac
 from typing import Optional
-
 from base58 import b58decode_check
 from ecdsa.curves import SECP256k1
-from binascii import (
-    hexlify, unhexlify
-)
-from ecdsa.ecdsa import (
-    int_to_string, string_to_int
-)
-
+from binascii import (hexlify, unhexlify)
+from ecdsa.ecdsa import int_to_string
+from elliptic_curve_cryptography_ecc import ecc
+from hashlib import sha256
 import ecdsa
 import struct
-
+import hashlib
+import hmac
 
 class HDWallet:
 
@@ -23,25 +18,55 @@ class HDWallet:
         self._chain_code = None
         self._depth: int = 0
         self._index: int = 0
+        self._path: str = "m"
         self._parent_fingerprint: bytes = b"\0\0\0\0"
         self._verified_key = None
         self._public_key = None
 
-    def Normal_Child__extended_public_key(self, index):
+    def from_path(self, path: str) -> "HDWallet":
+        """ Normal Child: extended public key """
+
+        if str(path)[0:2] != "m/":
+            raise ValueError("Bad path, please insert like this type of path \"m/0/0\"! ")
+
+        for index in path.lstrip("m/").split("/"):
+            if "'" in index:
+                "Bad path, \' in path need to private"
+            else:
+                self._derive_key_by_index(int(index))
+                self._path += str("/" + index)
+        return self
+
+    def _derive_key_by_index(self, index) -> "HDWallet":
         i_str = struct.pack(">L", index)
         data = unhexlify(self._public_key) + i_str
+        hmac_hash = hmac.new(key=self._chain_code, msg=data, digestmod=hashlib.sha512).digest()
 
-        key = bytes.fromhex(self._public_key)
-        hmac_hash = hmac.new(key=key, msg=data, digestmod=hashlib.sha512).hexdigest()
-        print("hmac_hash:", hmac_hash)
-        left_32bit = hmac_hash[:64]  # 64 hex >> 32 bit
-        child_chain_code = hmac_hash[64:]
+        left_32bit = hmac_hash[:32]
+        self._chain_code = hmac_hash[32:].hex()
 
-        int_child_public_key = int(self._public_key, 16) + int(left_32bit, 16)
-        child_public_key = (b"\0" * 32 + int_to_string(int_child_public_key))[-32:]
+        pubkey = ecc.ECPrivkey(left_32bit[0:32]) + ecc.ECPubkey(bytes.fromhex(self._public_key))
+        self._verified_key = ecdsa.VerifyingKey.from_string(
+            pubkey.get_public_key_bytes(compressed=False), curve=SECP256k1
+        )
 
-        print("child_chain_code: ", child_chain_code)
-        print("child_public_key: ", child_public_key)
+        self._depth += 1
+        self._index = index
+        self._parent_fingerprint = unhexlify(self.finger_print())
+        self._public_key = pubkey.get_public_key_bytes(compressed=True)
+
+        return self
+
+    def public_key(self, compressed: bool = True) -> str:
+        """
+        Get Public Key.
+
+        :param compressed: Compressed public key, default to ``True``.
+        :type compressed: bool
+
+        :returns: str -- Public key.
+        """
+        return self.compressed() if compressed else self.uncompressed()
 
     def from_xpublic_key(self, xpublic_key: str) -> "HDWallet":
         """
@@ -98,13 +123,36 @@ class HDWallet:
             ck = b"\2" + padx
         return hexlify(ck).decode()
 
+    def uncompressed(self, compressed: Optional[str] = None) -> str:
+        """
+        Get Uncommpresed Public Key.
+
+        :param compressed: Compressed public key, default to ``None``.
+        :type compressed: str
+
+        :returns: str -- Uncommpresed public key.
+        """
+
+        p = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
+        public_key = unhexlify(compressed) if compressed else unhexlify(self.compressed())
+        x = int.from_bytes(public_key[1:33], byteorder='big')
+        y_sq = (pow(x, 3, p) + 7) % p
+        y = pow(y_sq, (p + 1) // 4, p)
+        if y % 2 != public_key[0] % 2:
+            y = p - y
+        y = y.to_bytes(32, byteorder='big')
+        return (public_key[1:33] + y).hex()
+
+    def finger_print(self) -> str:
+        return self.hash(self._public_key)[:8]
+
+    def hash(self, public_key: str = None):
+        return hashlib.new("ripemd160", sha256(unhexlify(public_key)).digest()).hexdigest()
+
 
 xpub = 'dgub8kXBZ7ymNWy2RKqyrtun4BKWC5w12ChzSjiYYYjegnpE6PcYvSAuL1YnWEQVKQXgmiBbFLj2GWir1MmXvZ5Kv7Q7boRf3xMRqSvYfnFyyoT'
 hd = HDWallet()
 hd.from_xpublic_key(xpublic_key=xpub)
-print(hd.deserialize_xpublic_key(xpublic_key=xpub))
-print(hd.Normal_Child__extended_public_key(index=1))
+hd.from_path(path='m/0')
+print(hd.public_key())
 
-i_str = b'\x00\x00\x00\x01'
-_hamc  = b"\x9d\xf1O\xeaj\xe8g\xa7\xa3\x03\x9b\xa5?\xdd\xce\x9f\xed\x04'v\x8a\x0f\x98?-co\x866\xc1PZ\xb4&\x8c\xcb\xb9\xd6[g\xb0\xa6\xf3>LYR\xe6\x87\xbb\xa5\x04\x90\xca\x89\xf8\xc0\x9aD\xef\xed\xa8h\x80"
-secret= b'\x8a\x1d3O\xb1Uq{\xed\xf7\x16\xde\r\xd3rp\xde\xb37\xb7\xb5(\x17|\x07\xc6\x92k\x82\x05\x8b\xb1'
