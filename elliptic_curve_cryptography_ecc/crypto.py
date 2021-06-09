@@ -140,6 +140,21 @@ def aes_decrypt_with_iv(key: bytes, iv: bytes, data: bytes) -> bytes:
         raise Exception("Incorrect password")
 
 
+def hash_160(x: bytes) -> bytes:
+    return ripemd(sha256(x))
+
+
+def ripemd(x):
+    try:
+        md = hashlib.new('ripemd160')
+        md.update(x)
+        return md.digest()
+    except BaseException:
+        from . import ripemd
+        md = ripemd.new(x)
+        return md.digest()
+
+
 def sha256(x: Union[bytes, str]) -> bytes:
     x = to_bytes(x, 'utf8')
     return bytes(hashlib.sha256(x).digest())
