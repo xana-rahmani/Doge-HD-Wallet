@@ -1,19 +1,46 @@
 #!/usr/bin/env python3
 
-from typing import Union, NamedTuple
+from typing import Union, Any, NamedTuple
+
+import base58
 from base58 import b58decode_check
 from elliptic_curve_cryptography_ecc import ecc
 from elliptic_curve_cryptography_ecc.crypto import hash_160
+from elliptic_curve_cryptography_ecc.cryptocurrencies import get_cryptocurrency
 import hashlib
 import hmac
 
 class HDWallet(NamedTuple):
 
     eckey: Union[ecc.ECPubkey, ecc.ECPrivkey]
+    cryptocurrency: Any
     chaincode: bytes
     depth: int = 0
     parent_fingerprint: bytes = b'\x00' * 4  # as in serialized format, this is the *parent's* fingerprint
     child_number: bytes = b'\x00' * 4
+
+    @classmethod
+    def from_xpublic_key(cls, xpublic_key: str, symbol: str = "DOGE") -> "HDWallet":
+        """
+        Master from XPublic Key.
+
+        :param symbol:
+        :param xpublic_key: XPublic key.
+        :type xpublic_key: str
+
+        :returns: HDWallet -- Hierarchical Deterministic Wallet instance.
+        """
+
+        deserialize_xpublic_key = cls.deserialize_xpublic_key(xpublic_key=xpublic_key)
+        depth = int.from_bytes(deserialize_xpublic_key[1], "big")
+        parent_fingerprint = deserialize_xpublic_key[2]
+        child_number = deserialize_xpublic_key[3]
+        chaincode = deserialize_xpublic_key[4]
+        eckey = ecc.ECPubkey(deserialize_xpublic_key[5])
+        cryptocurrency = get_cryptocurrency(symbol=symbol)
+
+        return HDWallet(eckey=eckey, chaincode=chaincode, depth=depth, parent_fingerprint=parent_fingerprint,
+                        child_number=child_number, cryptocurrency=cryptocurrency)
 
     def subkey_at_public_derivation(self, path: str) -> "HDWallet":
         """ Normal Child: extended public key """
@@ -47,7 +74,7 @@ class HDWallet(NamedTuple):
         eckey = ecc.ECPubkey(pubkey)
 
         return HDWallet(eckey=eckey, chaincode=chaincode, depth=depth, parent_fingerprint=parent_fingerprint,
-                        child_number=child_number)
+                        child_number=child_number, cryptocurrency=self.cryptocurrency)
 
     def public_key(self, compressed: bool = True) -> str:
         """
@@ -60,26 +87,16 @@ class HDWallet(NamedTuple):
         """
         return self.eckey.get_public_key_hex(compressed=compressed)
 
-    @classmethod
-    def from_xpublic_key(cls, xpublic_key: str) -> "HDWallet":
+    def p2pkh_address(self) -> str:
         """
-        Master from XPublic Key.
+        Get Pay to Public Key Hash (P2PKH) address.
 
-        :param xpublic_key: XPublic key.
-        :type xpublic_key: str
-
-        :returns: HDWallet -- Hierarchical Deterministic Wallet instance.
+        :returns: str -- P2PKH address.
         """
-
-        deserialize_xpublic_key = cls.deserialize_xpublic_key(xpublic_key=xpublic_key)
-        depth = int.from_bytes(deserialize_xpublic_key[1], "big")
-        parent_fingerprint = deserialize_xpublic_key[2]
-        child_number = deserialize_xpublic_key[3]
-        chaincode = deserialize_xpublic_key[4]
-        eckey = ecc.ECPubkey(deserialize_xpublic_key[5])
-
-        return HDWallet(eckey=eckey, chaincode=chaincode, depth=depth, parent_fingerprint=parent_fingerprint,
-                        child_number=child_number)
+        compressed_public_key = self.eckey.get_public_key_bytes(compressed=True)
+        public_key_hash = hash_160(compressed_public_key)
+        network_hash160_bytes = bytes.fromhex(hex(self.cryptocurrency.PUBLIC_KEY_ADDRESS)[2:]) + public_key_hash
+        return base58.b58encode_check(network_hash160_bytes).decode("utf-8")
 
     @staticmethod
     def deserialize_xpublic_key(xpublic_key: str, encoded: bool = True) -> tuple:
@@ -94,10 +111,3 @@ class HDWallet(NamedTuple):
             decoded_xpublic_key[13:45],  # chaincode
             decoded_xpublic_key[45:]  # eckey
         )
-
-
-xpub = 'dgub8kXBZ7ymNWy2RKqyrtun4BKWC5w12ChzSjiYYYjegnpE6PcYvSAuL1YnWEQVKQXgmiBbFLj2GWir1MmXvZ5Kv7Q7boRf3xMRqSvYfnFyyoT'
-hd = HDWallet.from_xpublic_key(xpublic_key=xpub)
-hd.subkey_at_public_derivation(path='m/40/10/134')
-print(hd.public_key())
-
